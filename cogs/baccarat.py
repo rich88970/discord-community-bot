@@ -1,12 +1,5 @@
-"""百家樂 /baccarat
-
-依據標準補牌規則進行對局，玩家可下注：
-  - player（閒） 賠 2.204 倍，開和退還本金
-  - banker（莊） 賠 2.151 倍，開和退還本金
-  - tie（和）    賠 11.31 倍
-
-機率約：閒 0.4467、莊 0.4578、和 0.0955，
-對應期望值 EV ≈ 1.08（玩家略佔優勢）。
+"""百家樂 /baccarat：標準補牌、獨立抽牌。閒／莊開和退本金。
+含本金賠率為 1.93／1.88／10；計入和局後基礎回報約 95%–96%。
 """
 
 from __future__ import annotations
@@ -24,6 +17,7 @@ import game_images
 import visuals
 from cogs._rematch import RematchView, refund_failed_start, send_error, send_initial, try_defer
 from cogs.gamble_items import (
+    calculate_payout,
     add_item_lines_field,
     place_bet_or_error,
     selected_items,
@@ -37,9 +31,9 @@ RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
 
 DEAL_DELAY = 1.5
 WAIT_BEFORE_RESULT = 1.0
-PLAYER_PAYOUT = 2.204
-BANKER_PAYOUT = 2.151
-TIE_PAYOUT = 11.31
+PLAYER_PAYOUT = 1.93
+BANKER_PAYOUT = 1.88
+TIE_PAYOUT = 10.0
 
 
 def card_value(rank: str) -> int:
@@ -178,20 +172,20 @@ class Baccarat(commands.Cog):
     @app_commands.command(name="baccarat", description="百家樂：押閒/莊/和")
     @app_commands.describe(
         side="押注方：player(閒)、banker(莊)、tie(和)",
-        amount="下注金額",
+        amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}",
     )
     @app_commands.choices(
         side=[
-            app_commands.Choice(name="閒 Player (賠 2.20x，和局退)", value="player"),
-            app_commands.Choice(name="莊 Banker (賠 2.15x，和局退)", value="banker"),
-            app_commands.Choice(name="和 Tie (賠 11.31x)", value="tie"),
+            app_commands.Choice(name=f"閒 Player (含本金 {PLAYER_PAYOUT:.2f}x，和局退)", value="player"),
+            app_commands.Choice(name=f"莊 Banker (含本金 {BANKER_PAYOUT:.2f}x，和局退)", value="banker"),
+            app_commands.Choice(name=f"和 Tie (含本金 {TIE_PAYOUT:.2f}x)", value="tie"),
         ]
     )
     async def baccarat(
         self,
         interaction: discord.Interaction,
         side: app_commands.Choice[str],
-        amount: app_commands.Range[int, 10, 1_000_000_000],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
         insurance: bool = False,
         bonus: bool = False,
     ) -> None:
@@ -343,11 +337,11 @@ class Baccarat(commands.Cog):
 
         if side_value == winner:
             if winner == "player":
-                payout = int(round(amount * PLAYER_PAYOUT))
+                payout = calculate_payout(amount, PLAYER_PAYOUT)
             elif winner == "banker":
-                payout = int(round(amount * BANKER_PAYOUT))
+                payout = calculate_payout(amount, BANKER_PAYOUT)
             else:
-                payout = int(round(amount * TIE_PAYOUT))
+                payout = calculate_payout(amount, TIE_PAYOUT)
             profit = payout - amount
             color = config.WIN_COLOR
             result_text = (

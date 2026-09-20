@@ -1,9 +1,5 @@
-"""拉霸 /slot
-
-3 連線拉霸機，三圈相同有大獎，前兩圈相同也有小獎。
-動畫：三個輪盤先一起轉動，再一個一個停下。
-
-權重與賠率經過調校，整體 EV ≈ 1.08（玩家略佔優勢）。
+"""拉霸 /slot：三圈相同大獎，僅前兩圈相同小獎。
+權重與兩種互斥中獎事件共同正規化到 EV_TARGET。
 """
 
 from __future__ import annotations
@@ -20,6 +16,7 @@ import config
 import visuals
 from cogs._rematch import RematchView, refund_failed_start, send_error, send_initial, try_defer
 from cogs.gamble_items import (
+    calculate_payout,
     add_item_lines_field,
     place_bet_or_error,
     selected_items,
@@ -29,17 +26,25 @@ from database import db
 
 
 SYMBOLS: List[Tuple[str, int, float]] = [
-    ("🍒", 8, 10),
-    ("🍋", 7, 15),
-    ("🍊", 6, 25),
-    ("🍇", 5, 40),
-    ("🔔", 4, 70),
-    ("⭐", 3, 150),
-    ("💎", 2, 400),
-    ("7️⃣", 1, 1000),
+    ("🍒", 8, 7),
+    ("🍋", 7, 8),
+    ("🍊", 6, 9),
+    ("🍇", 5, 10),
+    ("🔔", 4, 12),
+    ("⭐", 3, 15),
+    ("💎", 2, 20),
+    ("7️⃣", 1, 30),
 ]
 
-PAIR_PAYOUT = 2.81
+# Keep rare wins within 7–30x, then price first-two-only pairs to the target.
+# This avoids making high wagers much worse when the prize cap is applied.
+_TOTAL_WEIGHT = sum(w for _, w, _ in SYMBOLS)
+_TRIPLE_RETURN = sum(
+    (w / _TOTAL_WEIGHT) ** 3 * prize
+    for _, w, prize in SYMBOLS
+)
+_PAIR_PROBABILITY = sum((w / _TOTAL_WEIGHT) ** 2 * (1 - w / _TOTAL_WEIGHT) for _, w, _ in SYMBOLS)
+PAIR_PAYOUT = (config.EV_TARGET - _TRIPLE_RETURN) / _PAIR_PROBABILITY
 
 SPIN_FRAMES = 3
 SPIN_DELAY = 0.45
@@ -95,11 +100,11 @@ class Slot(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="slot", description="拉霸機，三連線中大獎")
-    @app_commands.describe(amount="下注金額")
+    @app_commands.describe(amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}")
     async def slot(
         self,
         interaction: discord.Interaction,
-        amount: app_commands.Range[int, 10, 1_000_000_000],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
         insurance: bool = False,
         bonus: bool = False,
     ) -> None:
@@ -180,15 +185,15 @@ class Slot(commands.Cog):
 
         if reels_final[0] == reels_final[1] == reels_final[2]:
             mult = lookup_payout(reels_final[0])
-            label = f"💎 三連線 {reels_final[0]}！倍率 x{mult:.0f}"
+            label = f"💎 三連線 {reels_final[0]}！倍率 x{mult:.2f}"
         elif reels_final[0] == reels_final[1]:
             mult = PAIR_PAYOUT
-            label = f"✨ 兩連線！倍率 x{mult:.1f}"
+            label = f"✨ 兩連線！倍率 x{mult:.2f}"
         else:
             mult = 0.0
             label = "😢 沒有中獎"
 
-        payout = int(round(amount * mult))
+        payout = calculate_payout(amount, mult)
         profit = payout - amount
 
         new_balance, payout, profit, item_lines = await settle_bet_with_items(

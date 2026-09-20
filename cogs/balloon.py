@@ -1,10 +1,5 @@
-"""打氣球 /balloon
-
-每按一次 Pump，倍率提升、爆破機率變高。
-任何時候可以 Cash Out 領回，爆掉則歸零。
-
-倍率設計：mult_n = EV_TARGET / 累積存活機率，
-所以無論玩家在哪一次 pump 後 Cash Out，EV 都恰為 EV_TARGET ≈ 1.08。
+"""打氣球 /balloon：倍率為 EV_TARGET / 累積存活機率。
+固定提現點的基礎回報為 EV_TARGET；獎金向下取整並受單局上限限制。
 """
 
 from __future__ import annotations
@@ -26,6 +21,7 @@ from cogs._rematch import (
     try_defer,
 )
 from cogs.gamble_items import (
+    calculate_payout,
     add_item_lines_field,
     place_bet_or_error,
     selected_items,
@@ -77,7 +73,7 @@ class PumpButton(discord.ui.Button):
             return
 
         view.survival *= (1 - chance)
-        view.multiplier = config.EV_TARGET / view.survival
+        view.multiplier = min(config.MAX_GAMBLE_PAYOUT / view.bet, config.EV_TARGET / view.survival)
         embed = view.build_embed()
         await safe_view_edit(interaction, embed=embed, view=view, message=view.message)
 
@@ -131,7 +127,7 @@ class BalloonView(discord.ui.View):
 
     def build_embed(self) -> discord.Embed:
         next_chance = pop_chance(self.pumps + 1) * 100
-        potential = int(self.bet * self.multiplier)
+        potential = calculate_payout(self.bet, self.multiplier)
         danger = self.pumps >= 6
         balloon_art = visuals.render_balloon(self.pumps, danger=danger)
         color_dot = balloon_color(self.pumps)
@@ -174,7 +170,7 @@ class BalloonView(discord.ui.View):
                 color=config.INFO_COLOR,
             )
         else:
-            payout = int(self.bet * self.multiplier)
+            payout = calculate_payout(self.bet, self.multiplier)
             profit = payout - self.bet
             new_balance, payout, profit, item_lines = await settle_bet_with_items(
                 self.player_id,
@@ -233,7 +229,7 @@ class BalloonView(discord.ui.View):
 
     async def cash_out(self, interaction: discord.Interaction) -> None:
         self.finished = True
-        payout = int(self.bet * self.multiplier)
+        payout = calculate_payout(self.bet, self.multiplier)
         profit = payout - self.bet
         new_balance, payout, profit, item_lines = await settle_bet_with_items(
             self.player_id,
@@ -269,11 +265,11 @@ class Balloon(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="balloon", description="打氣球小遊戲")
-    @app_commands.describe(amount="下注金額")
+    @app_commands.describe(amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}")
     async def balloon(
         self,
         interaction: discord.Interaction,
-        amount: app_commands.Range[int, 10, 1_000_000_000],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
         insurance: bool = False,
         bonus: bool = False,
     ) -> None:

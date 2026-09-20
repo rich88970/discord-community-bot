@@ -1,12 +1,5 @@
-"""擲骰子 /dice
-
-3 顆骰子，玩家可押：
-  - big   (大 11–17，賠 2.22x)
-  - small (小 4–10，賠 2.22x)
-  - triple(圍骰，三顆同點，賠 38.88x)
-
-機率：大/小 各 105/216 ≈ 0.4861，圍骰 6/216 ≈ 0.0278。
-EV ≈ 1.08（玩家略佔優勢）。圍骰時莊家通殺大小。
+"""擲骰子 /dice：大小各 105/216、圍骰 6/216。
+圍骰通殺大小；含本金賠率依 EV_TARGET 計算。
 """
 
 from __future__ import annotations
@@ -24,6 +17,7 @@ import game_images
 import visuals
 from cogs._rematch import RematchView, refund_failed_start, send_error, send_initial, try_defer
 from cogs.gamble_items import (
+    calculate_payout,
     add_item_lines_field,
     place_bet_or_error,
     selected_items,
@@ -35,8 +29,8 @@ from database import db
 ROLL_FRAMES = 3
 FRAME_DELAY = 0.2
 STOP_DELAY = 0.3
-BIG_SMALL_PAYOUT = 2.22
-TRIPLE_PAYOUT = 38.88
+BIG_SMALL_PAYOUT = config.EV_TARGET * 216 / 105
+TRIPLE_PAYOUT = config.EV_TARGET * 36
 
 
 def _render_dice_block(faces: List[Optional[int]]) -> str:
@@ -82,19 +76,19 @@ class Dice(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="dice", description="擲三顆骰子押大/小/圍骰")
-    @app_commands.describe(side="押注方", amount="下注金額")
+    @app_commands.describe(side="押注方", amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}")
     @app_commands.choices(
         side=[
-            app_commands.Choice(name="大 Big 11–17 (賠 2.22x)", value="big"),
-            app_commands.Choice(name="小 Small 4–10 (賠 2.22x)", value="small"),
-            app_commands.Choice(name="圍骰 Triple (賠 38.88x)", value="triple"),
+            app_commands.Choice(name=f"大 Big 11–17 (含本金 {BIG_SMALL_PAYOUT:.2f}x)", value="big"),
+            app_commands.Choice(name=f"小 Small 4–10 (含本金 {BIG_SMALL_PAYOUT:.2f}x)", value="small"),
+            app_commands.Choice(name=f"圍骰 Triple (含本金 {TRIPLE_PAYOUT:.2f}x)", value="triple"),
         ]
     )
     async def dice(
         self,
         interaction: discord.Interaction,
         side: app_commands.Choice[str],
-        amount: app_commands.Range[int, 10, 1_000_000_000],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
         insurance: bool = False,
         bonus: bool = False,
     ) -> None:
@@ -202,15 +196,15 @@ class Dice(commands.Cog):
         if side_value == "triple":
             if is_triple:
                 win = True
-                payout = int(round(amount * TRIPLE_PAYOUT))
+                payout = calculate_payout(amount, TRIPLE_PAYOUT)
         elif side_value == "big":
             if not is_triple and 11 <= total <= 17:
                 win = True
-                payout = int(round(amount * BIG_SMALL_PAYOUT))
+                payout = calculate_payout(amount, BIG_SMALL_PAYOUT)
         elif side_value == "small":
             if not is_triple and 4 <= total <= 10:
                 win = True
-                payout = int(round(amount * BIG_SMALL_PAYOUT))
+                payout = calculate_payout(amount, BIG_SMALL_PAYOUT)
 
         if win:
             profit = payout - amount

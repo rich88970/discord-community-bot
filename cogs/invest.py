@@ -382,7 +382,7 @@ class Invest(commands.Cog):
     @app_commands.describe(
         symbol="股票/幣種代號，例如 2330、AAPL、BTC",
         amount="投入保證金/本金",
-        leverage="槓桿倍率，1 到 500",
+        leverage=f"槓桿倍率，1 到 {config.INVEST_MAX_LEVERAGE:g}",
         side="方向：做多或放空",
     )
     @app_commands.choices(
@@ -395,10 +395,13 @@ class Invest(commands.Cog):
         self,
         interaction: discord.Interaction,
         symbol: str,
-        amount: app_commands.Range[int, 100, 1_000_000_000],
-        leverage: app_commands.Range[float, 1.0, 500.0] = 1.0,
+        amount: app_commands.Range[int, 100, config.INVEST_MAX_AMOUNT],
+        leverage: app_commands.Range[float, 1.0, config.INVEST_MAX_LEVERAGE] = 1.0,
         side: app_commands.Choice[str] | None = None,
     ) -> None:
+        if not 100 <= amount <= config.INVEST_MAX_AMOUNT or not 1 <= leverage <= config.INVEST_MAX_LEVERAGE:
+            await interaction.response.send_message("投入金額或槓桿超過公開版上限。", ephemeral=True)
+            return
         quote = await self._quote_or_reply(interaction, symbol)
         if quote is None:
             return
@@ -414,8 +417,11 @@ class Invest(commands.Cog):
             balance = int(user.get("balance", 0))
             if balance < margin:
                 return {"ok": False, "balance": balance}
-            user["balance"] = balance - margin
             positions = user.setdefault("invest_positions", {})
+            total_margin = sum(float(p.get("margin", 0)) for p in positions.values() if isinstance(p, dict))
+            if total_margin + margin > config.INVEST_MAX_TOTAL_MARGIN:
+                return {"ok": False, "reason": "margin_limit"}
+            user["balance"] = balance - margin
             consolidated = consolidate_positions(positions)
             position = next(
                 (
@@ -488,6 +494,12 @@ class Invest(commands.Cog):
 
         result = await db.mutate_user(interaction.user.id, mutate)
         if not result["ok"]:
+            if result.get("reason") == "margin_limit":
+                await interaction.response.send_message(
+                    f"所有投資部位合計本金上限為 {config.INVEST_MAX_TOTAL_MARGIN:,}；請先平倉再投入。",
+                    ephemeral=True,
+                )
+                return
             await interaction.response.send_message(
                 f"餘額不足，需要 **{margin:,}**，目前餘額 **{int(result['balance']):,}**。",
                 ephemeral=True,

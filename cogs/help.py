@@ -10,7 +10,7 @@ import config
 
 
 COMMANDS = [
-    ("/claim", f"台灣時間每 15 分鐘整點領 {config.CLAIM_AMOUNT:,} 代幣"),
+    ("/claim", f"每 15 分鐘領 {config.CLAIM_AMOUNT:,}，每日最多 {config.CLAIM_DAILY_LIMIT} 次，台灣時間午夜重置"),
     ("/daily", f"台灣時間每天 00:00 後領 {config.DAILY_AMOUNT:,} 代幣"),
     ("/balance", "查看自己或他人的餘額與戰績"),
     ("/bank info", "查看銀行存款、鎖定與利息狀態"),
@@ -57,7 +57,8 @@ class Help(commands.Cog):
         for offset in range(0, len(COMMANDS), 20):
             embed = discord.Embed(
                 title="🎰 小遊戲機器人 指令清單",
-                description="輸入下列斜線指令開始遊戲！",
+                description=(f"小遊戲下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；"
+                             f"每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}。"),
                 color=config.EMBED_COLOR,
             )
             for cmd, desc in COMMANDS[offset:offset + 20]:

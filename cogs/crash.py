@@ -27,6 +27,7 @@ from cogs._rematch import (
     try_defer,
 )
 from cogs.gamble_items import (
+    calculate_payout,
     add_item_lines_field,
     place_bet_or_error,
     selected_items,
@@ -43,7 +44,7 @@ def random_crash_point() -> float:
     r = random.random()
     if r >= 1.0:
         r = 0.999999
-    return round(config.EV_TARGET / (1.0 - r), 2)
+    return config.EV_TARGET / (1.0 - r)
 
 
 class CrashCashOut(discord.ui.Button):
@@ -88,7 +89,7 @@ class CrashView(discord.ui.View):
         self.add_item(CrashCashOut())
 
     def build_embed(self, status: str = "📈 上升中…") -> discord.Embed:
-        potential = int(self.bet * self.multiplier)
+        potential = calculate_payout(self.bet, self.multiplier)
         meter = visuals.crash_meter(self.multiplier, width=20)
         rocket = visuals.crash_rocket(self.multiplier)
         desc = (
@@ -148,7 +149,7 @@ class CrashView(discord.ui.View):
                 color=config.LOSE_COLOR,
             )
         else:
-            payout = int(self.bet * self.multiplier)
+            payout = calculate_payout(self.bet, self.multiplier)
             profit = payout - self.bet
             new_balance, payout, profit, item_lines = await settle_bet_with_items(
                 self.player_id,
@@ -177,6 +178,9 @@ class CrashView(discord.ui.View):
 
     async def _loop(self) -> None:
         try:
+            if self.crash_point < 1.0:
+                await self.bust()
+                return
             while not self.finished:
                 await asyncio.sleep(TICK_INTERVAL)
                 if self.finished:
@@ -202,12 +206,15 @@ class CrashView(discord.ui.View):
             pass
 
     async def cash_out(self, interaction: discord.Interaction) -> None:
+        if self.finished:
+            await try_defer(interaction)
+            return
         if self.multiplier > self.crash_point:
             await self.bust()
             await try_defer(interaction)
             return
         self.finished = True
-        payout = int(self.bet * self.multiplier)
+        payout = calculate_payout(self.bet, self.multiplier)
         profit = payout - self.bet
         new_balance, payout, profit, item_lines = await settle_bet_with_items(
             self.player_id,
@@ -238,8 +245,10 @@ class CrashView(discord.ui.View):
         self.stop()
 
     async def _auto_cashout(self) -> None:
+        if self.finished:
+            return
         self.finished = True
-        payout = int(self.bet * self.multiplier)
+        payout = calculate_payout(self.bet, self.multiplier)
         profit = payout - self.bet
         new_balance, payout, profit, item_lines = await settle_bet_with_items(
             self.player_id,
@@ -305,13 +314,13 @@ class Crash(commands.Cog):
 
     @app_commands.command(name="crash", description="Crash 倍率崩盤遊戲")
     @app_commands.describe(
-        amount="下注金額",
+        amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}",
         auto_target="（選填）自動兌現倍率，例如 2.0",
     )
     async def crash(
         self,
         interaction: discord.Interaction,
-        amount: app_commands.Range[int, 10, 1_000_000_000],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
         auto_target: app_commands.Range[float, 1.01, 1000.0] | None = None,
         insurance: bool = False,
         bonus: bool = False,

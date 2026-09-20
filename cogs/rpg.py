@@ -4234,7 +4234,10 @@ class RPG(commands.GroupCog, name="rpg"):
                 + f"\n/rpg boss 的 Boss HP ×{BOSS_TRIAL_HP_MULTIPLIER:g}，ATK ×{BOSS_TRIAL_ATK_MULTIPLIER:g}。"
                 + f"\nBoss 素材掉落率 {data.BOSS_MATERIAL_DROP_RATE * 100:g}%；終焉塔 Boss 掉落 UR 素材，可製作 UR 飾品。"
                 + "\n獎勵副本：/rpg reward 每 12 小時挑戰一次，可選金幣或經驗。"
-                + "\n金幣副本：簡單 10000 / 普通 20000 / 困難 30000 / 極難 50000。"
+                + "\n金幣副本：" + " / ".join(
+                    f"{dungeon['difficulty_name']} {dungeon['coins']:,}"
+                    for dungeon in data.REWARD_DUNGEONS.values()
+                ) + "。"
                 + "\n經驗副本：簡單 1000 / 普通 2500 / 困難 3500 / 極難 5000。"
             ),
             color=config.EMBED_COLOR,

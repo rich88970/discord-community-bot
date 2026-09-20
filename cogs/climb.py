@@ -68,25 +68,23 @@ ICON_SCALE = 1
 SUPER_REWARD_FACTOR = 1.75
 
 
-def _fair_target_after_floor(bet: int, floor: int) -> float:
-    if floor <= 0:
-        return float(bet)
-    return float(bet) * config.EV_TARGET / (SAFE_CHANCE ** floor)
-
-
-def _floor_reward_amounts(bet: int, floor: int, mode: Dict[str, Any]) -> List[int]:
-    previous = _fair_target_after_floor(bet, floor - 1)
-    target = _fair_target_after_floor(bet, floor)
-    average_gain = max(1.0, target - previous)
+def _floor_reward_amounts(current_payout: int, floor: int, mode: Dict[str, Any]) -> List[int]:
+    # Include the treasure cell in the expectation, and price each step from
+    # the actual current winnings so adaptive cash-outs cannot exploit a low
+    # previous reward. Neither a minimum +1 nor rounding up is allowed.
+    factors = mode["reward_factors"]
+    weighted_gain = (sum(factors) + LUCKY_FLOOR_CHANCE * max(factors) * SUPER_REWARD_FACTOR) / COLS
+    target_return = config.EV_TARGET if floor == 1 else config.CLIMB_CONTINUE_RETURN
+    average_gain = current_payout * max(0.0, target_return - SAFE_CHANCE) / weighted_gain
     return [
-        max(1, int(round(average_gain * float(factor))))
-        for factor in mode["reward_factors"]
+        max(0, int(average_gain * float(factor)))
+        for factor in factors
     ]
 
 
 def _super_reward_amount(rewards: List[int]) -> int:
-    best = max(rewards) if rewards else 1
-    return max(best + 1, int(round(best * SUPER_REWARD_FACTOR)))
+    best = max(rewards) if rewards else 0
+    return int(best * SUPER_REWARD_FACTOR)
 
 
 class ClimbPickButton(discord.ui.Button):
@@ -292,11 +290,11 @@ class ClimbView(discord.ui.View):
     def _next_floor_preview(self) -> str:
         if self.finished or self.current_floor >= self.max_floors:
             return "無"
-        rewards = sorted(
-            int(cell["amount"])
-            for cell in self.floors[self.current_floor]
-            if cell["kind"] == "reward"
-        )
+        # Always show all possible tiers. Inspecting the generated floor here
+        # would reveal whether the next floor is bomb-free before committing.
+        rewards = _floor_reward_amounts(self.payout, self.current_floor + 1, self.mode)
+        rewards.append(_super_reward_amount(rewards))
+        rewards = [min(amount, config.MAX_GAMBLE_PAYOUT - self.payout) for amount in rewards]
         return " / ".join(f"+{amount:,}" for amount in rewards)
 
     def build_embed(
@@ -319,7 +317,8 @@ class ClimbView(discord.ui.View):
                 f"目前獎勵：**{self.payout:,}** 🪙\n"
                 f"淨收益：**{profit:+,}** 🪙\n"
                 f"到達層級：**{self.current_floor}/{self.max_floors}**\n"
-                f"下一層獎勵：**{self._next_floor_preview()}**"
+                f"下一層可能獎勵（含寶藏）：**{self._next_floor_preview()}**\n"
+                f"本局含道具最多領回 **{config.MAX_GAMBLE_PAYOUT:,}**"
             ),
             inline=False,
         )
@@ -376,6 +375,9 @@ class ClimbView(discord.ui.View):
                 await self.lose(interaction, floor_index)
                 return
 
+            rewards = _floor_reward_amounts(self.payout, floor_index + 1, self.mode)
+            gain = _super_reward_amount(rewards) if cell["tier"] == "super" else rewards[cell["tier"]]
+            cell["amount"] = min(gain, config.MAX_GAMBLE_PAYOUT - self.payout)
             self.current_floor += 1
             self.payout += int(cell["amount"])
             if self.current_floor >= self.max_floors:
@@ -487,9 +489,9 @@ class Climb(commands.Cog):
 
     @app_commands.command(name="climb", description="爬塔遊戲：每層選一格，6% 出現無炸彈寶藏層")
     @app_commands.describe(
-        amount="下注金額",
+        amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}",
         mode="模式",
-        defuse="使用拆彈券（下注金額需小於等於 2.5 億）",
+        defuse=f"使用拆彈券（下注最多 {config.DEFUSE_MAX_BET}，免疫不加獎金）",
     )
     @app_commands.choices(
         mode=[
@@ -501,7 +503,7 @@ class Climb(commands.Cog):
     async def climb(
         self,
         interaction: discord.Interaction,
-        amount: app_commands.Range[int, 10, 1_000_000_000],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
         mode: app_commands.Choice[str] | None = None,
         insurance: bool = False,
         defuse: bool = False,

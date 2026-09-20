@@ -145,7 +145,8 @@ class Database:
 
         periods = current_period - last_period
         bank_balance = int(user.get("bank_balance", 0))
-        interest = int(round(bank_balance * config.BANK_INTEREST_RATE)) * periods
+        principal = min(max(0, bank_balance), config.BANK_INTEREST_PRINCIPAL_CAP)
+        interest = int(principal * config.BANK_INTEREST_RATE) * periods
         if interest > 0:
             user["balance"] = int(user.get("balance", 0)) + interest
             user["bank_interest_total"] = int(user.get("bank_interest_total", 0)) + interest
@@ -279,6 +280,10 @@ class Database:
     ) -> Dict[str, Any]:
         self._ensure_shop_state(user)
         amount = int(amount)
+        if not config.MIN_GAMBLE_BET <= amount <= config.MAX_GAMBLE_BET:
+            return {"ok": False, "reason": "bet_limit"}
+        if "defuse" in item_ids and amount > config.DEFUSE_MAX_BET:
+            return {"ok": False, "reason": "defuse_limit"}
         if int(user["balance"]) < amount:
             return {"ok": False, "reason": "balance", "balance": int(user["balance"])}
 
@@ -484,7 +489,14 @@ class Database:
         async with self._lock:
             user = self._ensure_user(user_id)
             self._apply_bank_interest(user)
-            self._clear_pending_bet(user, pending_bet_id, amount=int(wager))
+            cleared = self._clear_pending_bet(user, pending_bet_id, amount=int(wager))
+            if cleared <= 0:
+                # Already settled or refunded: stale UI callbacks must not mint money.
+                self._save()
+                return int(user["balance"])
+            payout = min(config.MAX_GAMBLE_PAYOUT, max(0, int(payout)))
+            wager = cleared
+            profit = payout - wager
             if payout:
                 user["balance"] = int(user.get("balance", 0)) + int(payout)
 

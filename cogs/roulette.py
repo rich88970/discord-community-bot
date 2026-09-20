@@ -1,13 +1,5 @@
-"""輪盤 /roulette（簡化版）
-
-機器人從 0–36 抽一個號碼，玩家可下注：
-  - red    紅色  賠 2.22x
-  - black  黑色  賠 2.22x
-  - odd    單數  賠 2.22x
-  - even   雙數  賠 2.22x
-  - number 指定號碼 賠 39.96x
-
-0 為綠色，所有平注皆輸。EV ≈ 1.08（玩家略佔優勢）。
+"""輪盤 /roulette：0–36 均勻抽號，0 使所有平注落敗。
+含本金賠率依 EV_TARGET 計算。
 """
 
 from __future__ import annotations
@@ -24,6 +16,7 @@ import config
 import visuals
 from cogs._rematch import RematchView, refund_failed_start, send_error, send_initial, try_defer
 from cogs.gamble_items import (
+    calculate_payout,
     add_item_lines_field,
     place_bet_or_error,
     selected_items,
@@ -35,8 +28,8 @@ from database import db
 RED_NUMBERS = visuals.RED_NUMBERS
 
 SPIN_DELAYS = [0.25, 0.25, 0.30, 0.35, 0.40, 0.50, 0.65, 0.80, 1.00]
-EVEN_MONEY_PAYOUT = 2.22
-NUMBER_PAYOUT = 39.96
+EVEN_MONEY_PAYOUT = config.EV_TARGET * 37 / 18
+NUMBER_PAYOUT = config.EV_TARGET * 37
 
 
 def number_color(n: int) -> str:
@@ -91,23 +84,23 @@ class Roulette(commands.Cog):
     @app_commands.command(name="roulette", description="輪盤，押紅黑單雙或指定號碼")
     @app_commands.describe(
         bet="下注類型",
-        amount="下注金額",
+        amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}",
         number="當 bet=number 時請填 0–36",
     )
     @app_commands.choices(
         bet=[
-            app_commands.Choice(name="紅 Red (賠 2.22x)", value="red"),
-            app_commands.Choice(name="黑 Black (賠 2.22x)", value="black"),
-            app_commands.Choice(name="單 Odd (賠 2.22x)", value="odd"),
-            app_commands.Choice(name="雙 Even (賠 2.22x)", value="even"),
-            app_commands.Choice(name="號 Number 0–36 (賠 39.96x)", value="number"),
+            app_commands.Choice(name=f"紅 Red (含本金 {EVEN_MONEY_PAYOUT:.2f}x)", value="red"),
+            app_commands.Choice(name=f"黑 Black (含本金 {EVEN_MONEY_PAYOUT:.2f}x)", value="black"),
+            app_commands.Choice(name=f"單 Odd (含本金 {EVEN_MONEY_PAYOUT:.2f}x)", value="odd"),
+            app_commands.Choice(name=f"雙 Even (含本金 {EVEN_MONEY_PAYOUT:.2f}x)", value="even"),
+            app_commands.Choice(name=f"號 Number 0–36 (含本金 {NUMBER_PAYOUT:.2f}x)", value="number"),
         ]
     )
     async def roulette(
         self,
         interaction: discord.Interaction,
         bet: app_commands.Choice[str],
-        amount: app_commands.Range[int, 10, 1_000_000_000],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
         number: app_commands.Range[int, 0, 36] | None = None,
         insurance: bool = False,
         bonus: bool = False,
@@ -215,23 +208,23 @@ class Roulette(commands.Cog):
         if bet_value == "number":
             if number == result_num:
                 win = True
-                payout = int(round(amount * NUMBER_PAYOUT))
+                payout = calculate_payout(amount, NUMBER_PAYOUT)
         elif bet_value == "red":
             if result_num in RED_NUMBERS:
                 win = True
-                payout = int(round(amount * EVEN_MONEY_PAYOUT))
+                payout = calculate_payout(amount, EVEN_MONEY_PAYOUT)
         elif bet_value == "black":
             if result_num != 0 and result_num not in RED_NUMBERS:
                 win = True
-                payout = int(round(amount * EVEN_MONEY_PAYOUT))
+                payout = calculate_payout(amount, EVEN_MONEY_PAYOUT)
         elif bet_value == "odd":
             if result_num != 0 and result_num % 2 == 1:
                 win = True
-                payout = int(round(amount * EVEN_MONEY_PAYOUT))
+                payout = calculate_payout(amount, EVEN_MONEY_PAYOUT)
         elif bet_value == "even":
             if result_num != 0 and result_num % 2 == 0:
                 win = True
-                payout = int(round(amount * EVEN_MONEY_PAYOUT))
+                payout = calculate_payout(amount, EVEN_MONEY_PAYOUT)
 
         if win:
             profit = payout - amount

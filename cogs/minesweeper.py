@@ -1,10 +1,5 @@
-"""踩地雷 /mines
-
-20 格（4x5）格盤，可選 3 / 7 / 12 顆地雷。
-每翻開一格安全格，倍率提升；可隨時 Cash Out 領走獎金。
-踩到地雷則全部歸零。
-
-EV 設計：以組合學公式乘上 EV_TARGET，玩家任何時候 Cash Out 期望值都是 1.08。
+"""踩地雷 /mines：無道具時以組合機率計算倍率。
+拆彈僅免疫，不算安全格；使用後將移除的炸彈納入條件機率。
 """
 
 from __future__ import annotations
@@ -27,6 +22,7 @@ from cogs._rematch import (
     try_defer,
 )
 from cogs.gamble_items import (
+    calculate_payout,
     DEFUSE,
     add_item_lines_field,
     place_bet_or_error,
@@ -71,17 +67,20 @@ class MineButton(discord.ui.Button):
         if view.finished:
             await try_defer(interaction)
             return
+        if self.index in view.revealed:
+            await try_defer(interaction)
+            return
 
         if self.index in view.mines and view.defuse_charges > 0:
             view.defuse_charges -= 1
             view.mines.remove(self.index)
             view.revealed.add(self.index)
+            view.defused_count += 1
             view.status_note = "拆彈券生效：本次踩到炸彈已免疫。"
             self.style = discord.ButtonStyle.success
             self.label = "🧯"
             self.disabled = True
-            view.update_multiplier()
-            if len(view.revealed) == GRID_SIZE - view.mine_count:
+            if len(view.revealed) - view.defused_count == GRID_SIZE - view.mine_count:
                 await view.cash_out(interaction, perfect=True)
                 return
             embed = view.build_embed()
@@ -99,7 +98,7 @@ class MineButton(discord.ui.Button):
         self.disabled = True
 
         view.update_multiplier()
-        if len(view.revealed) == GRID_SIZE - view.mine_count:
+        if len(view.revealed) - view.defused_count == GRID_SIZE - view.mine_count:
             await view.cash_out(interaction, perfect=True)
             return
 
@@ -152,6 +151,7 @@ class MinesView(discord.ui.View):
         self.pending_bet_id = pending_bet_id
         self.item_ids = list(item_ids or [])
         self.defuse_charges = 1 if DEFUSE in self.item_ids else 0
+        self.defused_count = 0
         self.status_note = ""
         self.mines: Set[int] = set(random.sample(range(GRID_SIZE), mine_count))
         self.revealed: Set[int] = set()
@@ -164,21 +164,32 @@ class MinesView(discord.ui.View):
         self.add_item(CashOutButton())
 
     def update_multiplier(self) -> None:
-        self.multiplier = fair_multiplier(self.mine_count, len(self.revealed))
+        safe_revealed = len(self.revealed) - self.defused_count
+        if safe_revealed == 1:
+            self.multiplier = config.EV_TARGET
+        # Called once per newly revealed safe cell. Defused bombs do not
+        # increase winnings, and reduce the remaining unknown cell count.
+        unknown_before = GRID_SIZE - len(self.revealed) + 1
+        safe_before = GRID_SIZE - self.mine_count - safe_revealed + 1
+        self.multiplier = min(
+            config.MAX_GAMBLE_PAYOUT / self.bet,
+            self.multiplier * unknown_before / safe_before,
+        )
 
     def build_embed(self) -> discord.Embed:
-        potential = int(self.bet * self.multiplier)
+        potential = calculate_payout(self.bet, self.multiplier)
         embed = discord.Embed(
             title="💣 踩地雷",
             description=(
                 f"下注：**{self.bet:,}**　地雷數：**{self.mine_count}**\n"
-                f"已翻開：**{len(self.revealed)}** / {GRID_SIZE - self.mine_count}\n"
+                f"安全格：**{len(self.revealed) - self.defused_count}** / {GRID_SIZE - self.mine_count}，已拆彈 {self.defused_count}\n"
                 f"目前倍率：**x{self.multiplier:.2f}**\n"
-                f"領回金額：**{potential:,}**"
+                f"領回金額：**{potential:,}**\n"
+                f"{self.status_note}"
             ),
             color=config.INFO_COLOR,
         )
-        embed.set_footer(text="點擊格子翻開；隨時可 Cash Out 領走")
+        embed.set_footer(text=f"拆彈不加倍率；本局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}")
         return embed
 
     def _make_rematch(self) -> RematchView:
@@ -212,7 +223,7 @@ class MinesView(discord.ui.View):
                 color=config.INFO_COLOR,
             )
         else:
-            payout = int(self.bet * self.multiplier)
+            payout = calculate_payout(self.bet, self.multiplier)
             profit = payout - self.bet
             new_balance, payout, profit, item_lines = await settle_bet_with_items(
                 self.player_id,
@@ -277,7 +288,7 @@ class MinesView(discord.ui.View):
         self, interaction: discord.Interaction, perfect: bool = False
     ) -> None:
         self.finished = True
-        payout = int(self.bet * self.multiplier)
+        payout = calculate_payout(self.bet, self.multiplier)
         profit = payout - self.bet
         new_balance, payout, profit, item_lines = await settle_bet_with_items(
             self.player_id,
@@ -333,9 +344,9 @@ class Mines(commands.Cog):
 
     @app_commands.command(name="mines", description="踩地雷小遊戲")
     @app_commands.describe(
-        amount="下注金額",
+        amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}",
         mines="地雷數量（3 / 7 / 12）",
-        defuse="使用拆彈券（下注金額需小於等於 2.5 億）",
+        defuse=f"使用拆彈券（下注最多 {config.DEFUSE_MAX_BET}，免疫不加獎金）",
     )
     @app_commands.choices(
         mines=[
@@ -347,7 +358,7 @@ class Mines(commands.Cog):
     async def mines(
         self,
         interaction: discord.Interaction,
-        amount: app_commands.Range[int, 10, 1_000_000_000],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
         mines: app_commands.Choice[int],
         insurance: bool = False,
         defuse: bool = False,

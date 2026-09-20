@@ -207,6 +207,12 @@ class Economy(commands.Cog):
         next_reset = next_claim_reset(now)
 
         def mutate(user):
+            today = daily_date_key(now)
+            if user.get("claim_count_date") != today:
+                user["claim_count_date"] = today
+                user["claim_count"] = 0
+            if int(user.get("claim_count", 0)) >= config.CLAIM_DAILY_LIMIT:
+                return {"ok": False, "daily_limit": True}
             if str(user.get("last_claim_slot", "")) == slot_key:
                 return {
                     "ok": False,
@@ -216,6 +222,7 @@ class Economy(commands.Cog):
             user["balance"] = int(user.get("balance", 0)) + config.CLAIM_AMOUNT
             user["last_claim"] = local_ts(now)
             user["last_claim_slot"] = slot_key
+            user["claim_count"] = int(user.get("claim_count", 0)) + 1
             item_reward = roll_shop_item_reward(user, config.CLAIM_SHOP_ITEM_CHANCE)
             return {
                 "ok": True,
@@ -225,6 +232,12 @@ class Economy(commands.Cog):
 
         result = await db.mutate_user(interaction.user.id, mutate)
         if not result["ok"]:
+            if result.get("daily_limit"):
+                await interaction.followup.send(
+                    f"今天已領滿 {config.CLAIM_DAILY_LIMIT} 次，台灣時間午夜重置。可透過 RPG 挑戰取得更多獎勵。",
+                    ephemeral=True,
+                )
+                return
             if result.get("cooldown"):
                 remain = int(result["remain"])
                 embed = discord.Embed(
@@ -250,7 +263,7 @@ class Economy(commands.Cog):
                 value=f"抽到 **{item['name']}** x1（目前持有 {item['count']}）",
                 inline=False,
             )
-        embed.set_footer(text="台灣時間每小時 00 / 15 / 30 / 45 分刷新")
+        embed.set_footer(text=f"每 15 分鐘刷新；每日最多 {config.CLAIM_DAILY_LIMIT} 次，台灣時間午夜重置")
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="daily", description="每日領取代幣，金額依機器人設定")
@@ -409,7 +422,8 @@ class Economy(commands.Cog):
             name="利息",
             value=(
                 f"每 **{config.BANK_INTEREST_INTERVAL_HOURS} 小時** 發放銀行存款的 "
-                f"**{config.BANK_INTEREST_RATE * 100:.0f}%** 到錢包。\n"
+                f"**{config.BANK_INTEREST_RATE * 100:g}%** 到錢包。\n"
+                f"計息本金上限 **{config.BANK_INTEREST_PRINCIPAL_CAP:,}**，每期向下取整。\n"
                 f"下次發放：**{next_interest:%Y-%m-%d %H:%M}**"
             ),
             inline=False,
@@ -449,7 +463,8 @@ class Economy(commands.Cog):
             name="利息",
             value=(
                 f"每 **{config.BANK_INTEREST_INTERVAL_HOURS} 小時** 給予銀行存款 "
-                f"**{config.BANK_INTEREST_RATE * 100:.0f}%**，利息直接進錢包。"
+                f"**{config.BANK_INTEREST_RATE * 100:g}%**，利息直接進錢包。\n"
+                f"計息本金上限 **{config.BANK_INTEREST_PRINCIPAL_CAP:,}**，每期向下取整。"
             ),
             inline=False,
         )
