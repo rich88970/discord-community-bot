@@ -84,7 +84,7 @@ class Roulette(commands.Cog):
     @app_commands.command(name="roulette", description="輪盤，押紅黑單雙或指定號碼")
     @app_commands.describe(
         bet="下注類型",
-        amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}",
+        amount=f"下注金額（至少 {config.MIN_GAMBLE_BET}，不設金額上限）",
         number="當 bet=number 時請填 0–36",
     )
     @app_commands.choices(
@@ -100,7 +100,7 @@ class Roulette(commands.Cog):
         self,
         interaction: discord.Interaction,
         bet: app_commands.Choice[str],
-        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET],
         number: app_commands.Range[int, 0, 36] | None = None,
         insurance: bool = False,
         bonus: bool = False,

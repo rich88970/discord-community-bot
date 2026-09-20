@@ -42,6 +42,7 @@ intents.message_content = False
 
 bot = commands.Bot(command_prefix=config.COMMAND_PREFIX, intents=intents)
 pending_safety_task: asyncio.Task | None = None
+investment_safety_task: asyncio.Task | None = None
 
 
 async def pending_safety_loop() -> None:
@@ -56,12 +57,28 @@ async def pending_safety_loop() -> None:
         await asyncio.sleep(30)
 
 
+async def investment_safety_loop() -> None:
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            cog = bot.get_cog("Invest")
+            if cog is not None:
+                count = await cog.check_liquidations()
+                if count:
+                    log.info("已強制平倉 %d 筆模擬投資部位", count)
+        except Exception:
+            log.exception("模擬投資強平檢查失敗")
+        await asyncio.sleep(config.INVEST_LIQUIDATION_CHECK_SECONDS)
+
+
 @bot.event
 async def on_ready() -> None:
-    global pending_safety_task
+    global pending_safety_task, investment_safety_task
     log.info("已登入：%s (id=%s)", bot.user, bot.user.id if bot.user else "?")
     if pending_safety_task is None or pending_safety_task.done():
         pending_safety_task = asyncio.create_task(pending_safety_loop())
+    if investment_safety_task is None or investment_safety_task.done():
+        investment_safety_task = asyncio.create_task(investment_safety_loop())
     try:
         synced = await bot.tree.sync()
         log.info("已同步 %d 個斜線指令", len(synced))

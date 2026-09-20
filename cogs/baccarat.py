@@ -1,5 +1,5 @@
 """百家樂 /baccarat：標準補牌、獨立抽牌。閒／莊開和退本金。
-含本金賠率為 1.93／1.88／10；計入和局後基礎回報約 95%–96%。
+含本金賠率依獨立抽牌機率計算，將和局退本金納入 EV_TARGET。
 """
 
 from __future__ import annotations
@@ -31,9 +31,13 @@ RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
 
 DEAL_DELAY = 1.5
 WAIT_BEFORE_RESULT = 1.0
-PLAYER_PAYOUT = 1.93
-BANKER_PAYOUT = 1.88
-TIE_PAYOUT = 10.0
+# Exact enumeration of this implementation's independent card draws.
+PLAYER_PROBABILITY = 0.4461465121159756
+BANKER_PROBABILITY = 0.458427917906012
+TIE_PROBABILITY = 0.0954255699780124
+PLAYER_PAYOUT = (config.EV_TARGET - TIE_PROBABILITY) / PLAYER_PROBABILITY
+BANKER_PAYOUT = (config.EV_TARGET - TIE_PROBABILITY) / BANKER_PROBABILITY
+TIE_PAYOUT = config.EV_TARGET / TIE_PROBABILITY
 
 
 def card_value(rank: str) -> int:
@@ -172,7 +176,7 @@ class Baccarat(commands.Cog):
     @app_commands.command(name="baccarat", description="百家樂：押閒/莊/和")
     @app_commands.describe(
         side="押注方：player(閒)、banker(莊)、tie(和)",
-        amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}",
+        amount=f"下注金額（至少 {config.MIN_GAMBLE_BET}，不設金額上限）",
     )
     @app_commands.choices(
         side=[
@@ -185,7 +189,7 @@ class Baccarat(commands.Cog):
         self,
         interaction: discord.Interaction,
         side: app_commands.Choice[str],
-        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET],
         insurance: bool = False,
         bonus: bool = False,
     ) -> None:

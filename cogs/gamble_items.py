@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from fractions import Fraction
 from typing import Iterable
 
 import discord
@@ -54,8 +55,8 @@ def add_item_lines_field(embed: discord.Embed, item_lines: Iterable[str]) -> Non
 
 
 def calculate_payout(wager: int, multiplier: float) -> int:
-    """Return includes the stake; round down and apply the public prize cap."""
-    return min(config.MAX_GAMBLE_PAYOUT, max(0, int(wager * multiplier)))
+    """Return includes the stake; round down without an application prize cap."""
+    return max(0, int(int(wager) * Fraction(str(multiplier))))
 
 
 async def place_bet_or_error(
@@ -66,21 +67,13 @@ async def place_bet_or_error(
     *,
     is_followup: bool,
 ) -> tuple[str, list[str]] | None:
-    if not config.MIN_GAMBLE_BET <= int(amount) <= config.MAX_GAMBLE_BET:
+    if int(amount) < config.MIN_GAMBLE_BET:
         await send_error(
             interaction,
-            f"下注金額須介於 **{config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}**。",
+            f"下注金額至少為 **{config.MIN_GAMBLE_BET}**。",
             is_followup=is_followup,
         )
         return None
-    if item_ids and DEFUSE in item_ids and int(amount) > config.DEFUSE_MAX_BET:
-        await send_error(
-            interaction,
-            f"拆彈券只能在下注金額小於等於 **{config.DEFUSE_MAX_BET:,}** 時使用。",
-            is_followup=is_followup,
-        )
-        return None
-
     result = await db.place_bet_with_items(
         interaction.user.id, int(amount), game, list(item_ids or [])
     )
@@ -108,25 +101,22 @@ def apply_settlement_items(
 ) -> tuple[int, int, list[str]]:
     item_set = set(item_ids)
     lines: list[str] = []
-    adjusted_payout = min(config.MAX_GAMBLE_PAYOUT, max(0, int(payout)))
+    adjusted_payout = max(0, int(payout))
     adjusted_profit = adjusted_payout - int(wager)
 
     if adjusted_profit > 0 and BONUS in item_set:
-        bonus_amount = int(adjusted_profit * config.GAMBLE_BONUS_RATE)
+        bonus_amount = int(adjusted_profit * Fraction(str(config.GAMBLE_BONUS_RATE)))
         if bonus_amount > 0:
             adjusted_payout += bonus_amount
             adjusted_profit += bonus_amount
             lines.append(f"加倍券生效：淨利 +25%，額外 +{bonus_amount:,}。")
 
     if adjusted_profit < 0 and INSURANCE in item_set:
-        refund = int(-adjusted_profit * config.GAMBLE_INSURANCE_REFUND_RATE)
+        refund = int(-adjusted_profit * Fraction(str(config.GAMBLE_INSURANCE_REFUND_RATE)))
         adjusted_payout += refund
         adjusted_profit += refund
         lines.append(f"保險券生效：返還虧損的 {config.GAMBLE_INSURANCE_REFUND_RATE:.0%}，共 {refund:,}。")
 
-    if adjusted_payout > config.MAX_GAMBLE_PAYOUT:
-        adjusted_payout = config.MAX_GAMBLE_PAYOUT
-        lines.append(f"本局含道具領回上限：{config.MAX_GAMBLE_PAYOUT:,}。")
     adjusted_profit = adjusted_payout - int(wager)
     if lines:
         lines.append(f"道具後結算：領回 {adjusted_payout:,}，淨利 {adjusted_profit:+,}。")

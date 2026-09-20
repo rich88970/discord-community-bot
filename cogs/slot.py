@@ -36,8 +36,7 @@ SYMBOLS: List[Tuple[str, int, float]] = [
     ("7️⃣", 1, 30),
 ]
 
-# Keep rare wins within 7–30x, then price first-two-only pairs to the target.
-# This avoids making high wagers much worse when the prize cap is applied.
+# Triple payouts are 7–30x; price first-two-only pairs to EV_TARGET.
 _TOTAL_WEIGHT = sum(w for _, w, _ in SYMBOLS)
 _TRIPLE_RETURN = sum(
     (w / _TOTAL_WEIGHT) ** 3 * prize
@@ -100,11 +99,11 @@ class Slot(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="slot", description="拉霸機，三連線中大獎")
-    @app_commands.describe(amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}")
+    @app_commands.describe(amount=f"下注金額（至少 {config.MIN_GAMBLE_BET}，不設金額上限）")
     async def slot(
         self,
         interaction: discord.Interaction,
-        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET],
         insurance: bool = False,
         bonus: bool = False,
     ) -> None:

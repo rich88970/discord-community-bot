@@ -171,10 +171,7 @@ class MinesView(discord.ui.View):
         # increase winnings, and reduce the remaining unknown cell count.
         unknown_before = GRID_SIZE - len(self.revealed) + 1
         safe_before = GRID_SIZE - self.mine_count - safe_revealed + 1
-        self.multiplier = min(
-            config.MAX_GAMBLE_PAYOUT / self.bet,
-            self.multiplier * unknown_before / safe_before,
-        )
+        self.multiplier = self.multiplier * unknown_before / safe_before
 
     def build_embed(self) -> discord.Embed:
         potential = calculate_payout(self.bet, self.multiplier)
@@ -189,7 +186,7 @@ class MinesView(discord.ui.View):
             ),
             color=config.INFO_COLOR,
         )
-        embed.set_footer(text=f"拆彈不加倍率；本局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}")
+        embed.set_footer(text="拆彈不加倍率；領回金額無上限")
         return embed
 
     def _make_rematch(self) -> RematchView:
@@ -344,9 +341,9 @@ class Mines(commands.Cog):
 
     @app_commands.command(name="mines", description="踩地雷小遊戲")
     @app_commands.describe(
-        amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}",
+        amount=f"下注金額（至少 {config.MIN_GAMBLE_BET}，不設金額上限）",
         mines="地雷數量（3 / 7 / 12）",
-        defuse=f"使用拆彈券（下注最多 {config.DEFUSE_MAX_BET}，免疫不加獎金）",
+        defuse="使用拆彈券（免疫不加獎金）",
     )
     @app_commands.choices(
         mines=[
@@ -358,7 +355,7 @@ class Mines(commands.Cog):
     async def mines(
         self,
         interaction: discord.Interaction,
-        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET],
         mines: app_commands.Choice[int],
         insurance: bool = False,
         defuse: bool = False,

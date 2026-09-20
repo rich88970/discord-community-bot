@@ -13,6 +13,7 @@ import os
 import time
 import uuid
 from datetime import datetime
+from fractions import Fraction
 from typing import Any, Callable, Dict
 from zoneinfo import ZoneInfo
 
@@ -145,8 +146,8 @@ class Database:
 
         periods = current_period - last_period
         bank_balance = int(user.get("bank_balance", 0))
-        principal = min(max(0, bank_balance), config.BANK_INTEREST_PRINCIPAL_CAP)
-        interest = int(principal * config.BANK_INTEREST_RATE) * periods
+        principal = max(0, bank_balance)
+        interest = int(principal * Fraction(str(config.BANK_INTEREST_RATE))) * periods
         if interest > 0:
             user["balance"] = int(user.get("balance", 0)) + interest
             user["bank_interest_total"] = int(user.get("bank_interest_total", 0)) + interest
@@ -280,10 +281,8 @@ class Database:
     ) -> Dict[str, Any]:
         self._ensure_shop_state(user)
         amount = int(amount)
-        if not config.MIN_GAMBLE_BET <= amount <= config.MAX_GAMBLE_BET:
+        if amount < config.MIN_GAMBLE_BET:
             return {"ok": False, "reason": "bet_limit"}
-        if "defuse" in item_ids and amount > config.DEFUSE_MAX_BET:
-            return {"ok": False, "reason": "defuse_limit"}
         if int(user["balance"]) < amount:
             return {"ok": False, "reason": "balance", "balance": int(user["balance"])}
 
@@ -494,7 +493,7 @@ class Database:
                 # Already settled or refunded: stale UI callbacks must not mint money.
                 self._save()
                 return int(user["balance"])
-            payout = min(config.MAX_GAMBLE_PAYOUT, max(0, int(payout)))
+            payout = max(0, int(payout))
             wager = cleared
             profit = payout - wager
             if payout:
@@ -576,6 +575,15 @@ class Database:
             result = callback(user)
             self._save()
             return copy.deepcopy(result)
+
+    async def investment_users(self) -> dict[int, list[dict[str, Any]]]:
+        """Snapshot open positions for price polling outside the database lock."""
+        async with self._lock:
+            return {
+                int(uid): copy.deepcopy(list(user.get("invest_positions", {}).values()))
+                for uid, user in self._data.get("users", {}).items()
+                if isinstance(user, dict) and user.get("invest_positions")
+            }
 
     async def top_balances(self, limit: int = 10):
         async with self._lock:

@@ -76,7 +76,7 @@ class Dice(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="dice", description="擲三顆骰子押大/小/圍骰")
-    @app_commands.describe(side="押注方", amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}")
+    @app_commands.describe(side="押注方", amount=f"下注金額（至少 {config.MIN_GAMBLE_BET}，不設金額上限）")
     @app_commands.choices(
         side=[
             app_commands.Choice(name=f"大 Big 11–17 (含本金 {BIG_SMALL_PAYOUT:.2f}x)", value="big"),
@@ -88,7 +88,7 @@ class Dice(commands.Cog):
         self,
         interaction: discord.Interaction,
         side: app_commands.Choice[str],
-        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET],
         insurance: bool = False,
         bonus: bool = False,
     ) -> None:

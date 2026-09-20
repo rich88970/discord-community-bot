@@ -35,7 +35,6 @@ OWNER_IDS: list[int] = _owner_ids_from_env()
 COMMAND_PREFIX = "!"
 
 CLAIM_AMOUNT = 50
-CLAIM_DAILY_LIMIT = 8
 CLAIM_COOLDOWN_SECONDS = 15 * 60
 CLAIM_SKILL_DRAWS = 0
 CLAIM_WEAPON_DRAWS = 0
@@ -50,8 +49,7 @@ DAILY_ARMOR_DRAWS = 0
 DAILY_SHOP_ITEM_CHANCE = 0.10
 
 LOCAL_TIMEZONE = "Asia/Taipei"
-BANK_INTEREST_RATE = 0.0005
-BANK_INTEREST_PRINCIPAL_CAP = 10_000
+BANK_INTEREST_RATE = 0.01
 BANK_INTEREST_INTERVAL_HOURS = 4
 BANK_INTEREST_INTERVAL_SECONDS = BANK_INTEREST_INTERVAL_HOURS * 60 * 60
 BANK_WITHDRAW_LOCK_SECONDS = 24 * 60 * 60
@@ -60,19 +58,18 @@ STARTING_BALANCE = 1_000
 
 DATA_FILE = "data.json"
 
-# Base return before integer rounding, prize caps and consumable items.
-EV_TARGET = 0.96
-CLIMB_CONTINUE_RETURN = 0.98
+# Base return before integer rounding and consumable items.
+EV_TARGET = 0.99
+CLIMB_CONTINUE_RETURN = 1.0
 PENDING_BET_REFUND_SECONDS = 6 * 60
 MIN_GAMBLE_BET = 10
-MAX_GAMBLE_BET = 500
-MAX_GAMBLE_PAYOUT = 5_000
-DEFUSE_MAX_BET = 100
 
 INVEST_PRICE_CACHE_SECONDS = 60
-INVEST_MAX_LEVERAGE = 3.0
-INVEST_MAX_AMOUNT = 2_000
-INVEST_MAX_TOTAL_MARGIN = 5_000
+INVEST_MAX_LEVERAGE = 5.0
+# Simulation parameters, not live exchange-specific rates.
+INVEST_TRADING_FEE_RATE = "0.00055"
+INVEST_MAINTENANCE_MARGIN_RATE = "0.005"
+INVEST_LIQUIDATION_CHECK_SECONDS = 60
 INVEST_TRANSACTION_HISTORY_LIMIT = 100
 
 SHOP_ITEMS = {
@@ -84,7 +81,7 @@ SHOP_ITEMS = {
     "defuse": {
         "name": "拆彈券",
         "price": 400,
-        "description": "本局 climb/mines 第一次踩到炸彈時免疫，下注最多 100；免疫不增加獎金或倍率。",
+        "description": "本局 climb/mines 第一次踩到炸彈時免疫，免疫不增加獎金或倍率。",
     },
     "bonus": {
         "name": "加倍券",

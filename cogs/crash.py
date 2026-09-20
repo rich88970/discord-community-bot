@@ -314,14 +314,14 @@ class Crash(commands.Cog):
 
     @app_commands.command(name="crash", description="Crash 倍率崩盤遊戲")
     @app_commands.describe(
-        amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}",
+        amount=f"下注金額（至少 {config.MIN_GAMBLE_BET}，不設金額上限）",
         auto_target="（選填）自動兌現倍率，例如 2.0",
     )
     async def crash(
         self,
         interaction: discord.Interaction,
-        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
-        auto_target: app_commands.Range[float, 1.01, 1000.0] | None = None,
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET],
+        auto_target: app_commands.Range[float, 1.01] | None = None,
         insurance: bool = False,
         bonus: bool = False,
     ) -> None:

@@ -1,5 +1,5 @@
 """打氣球 /balloon：倍率為 EV_TARGET / 累積存活機率。
-固定提現點的基礎回報為 EV_TARGET；獎金向下取整並受單局上限限制。
+固定提現點的基礎回報為 EV_TARGET；獎金向下取整。
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ class PumpButton(discord.ui.Button):
             return
 
         view.survival *= (1 - chance)
-        view.multiplier = min(config.MAX_GAMBLE_PAYOUT / view.bet, config.EV_TARGET / view.survival)
+        view.multiplier = config.EV_TARGET / view.survival
         embed = view.build_embed()
         await safe_view_edit(interaction, embed=embed, view=view, message=view.message)
 
@@ -265,11 +265,11 @@ class Balloon(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="balloon", description="打氣球小遊戲")
-    @app_commands.describe(amount=f"下注 {config.MIN_GAMBLE_BET}–{config.MAX_GAMBLE_BET}；每局含道具最多領回 {config.MAX_GAMBLE_PAYOUT:,}")
+    @app_commands.describe(amount=f"下注金額（至少 {config.MIN_GAMBLE_BET}，不設金額上限）")
     async def balloon(
         self,
         interaction: discord.Interaction,
-        amount: app_commands.Range[int, config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET],
+        amount: app_commands.Range[int, config.MIN_GAMBLE_BET],
         insurance: bool = False,
         bonus: bool = False,
     ) -> None:

@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from datetime import datetime, timedelta
-from functools import lru_cache
 from itertools import product
 from pathlib import Path
 import tempfile
@@ -43,58 +42,7 @@ def baccarat_probabilities():
 
 
 class BalanceMath(unittest.TestCase):
-    def test_purchased_defuse_with_optimal_cashouts_does_not_create_income(self):
-        import config
-        from cogs import climb
-        from cogs.gamble_items import calculate_payout, apply_settlement_items
-
-        def optimal_mines(bet, mines, items):
-            def cash(multiplier):
-                return apply_settlement_items(bet, calculate_payout(bet, multiplier), 0, items)[0]
-
-            @lru_cache(None)
-            def value(safe, removed, multiplier):
-                payout = cash(multiplier)
-                if safe == 20 - mines:
-                    return payout
-                probability = (20 - mines - safe) / (20 - safe - removed)
-                next_multiplier = min(config.MAX_GAMBLE_PAYOUT / bet,
-                                      (config.EV_TARGET if safe == 0 else multiplier) / probability)
-                safe_value = value(safe + 1, removed, next_multiplier)
-                bomb_value = value(safe, 1, multiplier) if removed == 0 else cash(0)
-                continuation = probability * safe_value + (1 - probability) * bomb_value
-                return max(payout, continuation) if safe + removed else continuation
-
-            return value(0, 0, 1.0)
-
-        def optimal_climb(bet, mode, items):
-            def cash(payout):
-                return apply_settlement_items(bet, payout, 0, items)[0]
-
-            @lru_cache(None)
-            def value(floor, current, charge):
-                payout = cash(current)
-                if floor > mode["floors"]:
-                    return payout
-                rewards = climb._floor_reward_amounts(current, floor, mode)
-                normal = sum(value(floor + 1, min(config.MAX_GAMBLE_PAYOUT, current + gain), charge) for gain in rewards) / 4
-                treasure = value(floor + 1, min(config.MAX_GAMBLE_PAYOUT, current + climb._super_reward_amount(rewards)), charge) / 4
-                bomb = value(floor + 1, current, False) if charge else cash(0)
-                continuation = normal + climb.LUCKY_FLOOR_CHANCE * treasure + (1 - climb.LUCKY_FLOOR_CHANCE) * bomb / 4
-                return max(payout, continuation) if floor > 1 else continuation
-
-            return value(1, bet, True)
-
-        for items in [("defuse",), ("defuse", "bonus"), ("defuse", "insurance"), ("defuse", "bonus", "insurance")]:
-            cost = sum(config.SHOP_ITEMS[item]["price"] for item in items)
-            for bet in range(config.MIN_GAMBLE_BET, config.DEFUSE_MAX_BET + 1):
-                for mines in [3, 7, 12]:
-                    self.assertLess(optimal_mines(bet, mines, items), bet + cost)
-            for bet in [10, 50, config.DEFUSE_MAX_BET]:
-                for mode in climb.MODES.values():
-                    self.assertLess(optimal_climb(bet, mode, items), bet + cost)
-
-    def test_dice_and_roulette_returns_at_every_legal_bet(self):
+    def test_dice_and_roulette_returns_including_large_bets(self):
         import config
         from cogs import dice, roulette
         from cogs.gamble_items import calculate_payout
@@ -102,7 +50,7 @@ class BalanceMath(unittest.TestCase):
         for a, b, c in product(range(1, 7), repeat=3):
             outcomes["triple" if a == b == c else "big" if a + b + c >= 11 else "small"] += 1
         self.assertEqual(outcomes, {"big": 105, "small": 105, "triple": 6})
-        for bet in range(config.MIN_GAMBLE_BET, config.MAX_GAMBLE_BET + 1):
+        for bet in list(range(config.MIN_GAMBLE_BET, 501)) + [10**6, 10**12]:
             for chance, multiplier in [(105 / 216, dice.BIG_SMALL_PAYOUT), (6 / 216, dice.TRIPLE_PAYOUT),
                                        (18 / 37, roulette.EVEN_MONEY_PAYOUT), (1 / 37, roulette.NUMBER_PAYOUT)]:
                 self.assertLessEqual(chance * calculate_payout(bet, multiplier) / bet, config.EV_TARGET + 1e-12)
@@ -113,7 +61,7 @@ class BalanceMath(unittest.TestCase):
         probabilities = baccarat_probabilities()
         for side, multiplier in [("player", baccarat.PLAYER_PAYOUT), ("banker", baccarat.BANKER_PAYOUT), ("tie", baccarat.TIE_PAYOUT)]:
             push = probabilities["tie"] if side != "tie" else 0
-            self.assertTrue(0.94 < probabilities[side] * multiplier + push < 0.97)
+            self.assertAlmostEqual(probabilities[side] * multiplier + push, 0.99)
             for bet in range(10, 501):
                 self.assertLess(probabilities[side] * calculate_payout(bet, multiplier) + push * bet, bet)
 
@@ -157,12 +105,12 @@ class BalanceMath(unittest.TestCase):
         for mode in climb.MODES.values():
             for floor in range(1, mode["floors"] + 1):
                 target = config.EV_TARGET if floor == 1 else config.CLIMB_CONTINUE_RETURN
-                for current in range(10, config.MAX_GAMBLE_PAYOUT + 1):
+                for current in list(range(10, 5001)) + [10**6, 10**9]:
                     rewards = climb._floor_reward_amounts(current, floor, mode)
-                    normal = sum(min(config.MAX_GAMBLE_PAYOUT, current + gain) for gain in rewards) / 4
-                    treasure = normal + min(config.MAX_GAMBLE_PAYOUT, current + climb._super_reward_amount(rewards)) / 4
+                    normal = sum(current + gain for gain in rewards) / 4
+                    treasure = normal + (current + climb._super_reward_amount(rewards)) / 4
                     expected = (1 - climb.LUCKY_FLOOR_CHANCE) * normal + climb.LUCKY_FLOOR_CHANCE * treasure
-                    self.assertLessEqual(expected, current * target + 1e-9)
+                    self.assertLessEqual(expected, current * target + max(1e-9, current * 1e-12))
 
     def test_crash_has_initial_busts_and_unrounded_tail(self):
         import config
@@ -179,7 +127,7 @@ class BalanceMath(unittest.TestCase):
             returned = sum(p >= target for p in points) / samples * target
             self.assertAlmostEqual(returned, config.EV_TARGET, delta=target / samples)
 
-    def test_insurance_cannot_turn_a_partial_loss_into_profit_and_bonus_is_capped(self):
+    def test_insurance_partial_loss_and_uncapped_bonus(self):
         import discord
         import config
         from cogs.gamble_items import apply_settlement_items, add_item_lines_field
@@ -191,7 +139,7 @@ class BalanceMath(unittest.TestCase):
             add_item_lines_field(embed, lines)
             self.assertEqual(len(embed.fields), 1)
         payout, profit, _ = apply_settlement_items(500, 5000, 4500, ["bonus"])
-        self.assertEqual(payout, config.MAX_GAMBLE_PAYOUT)
+        self.assertEqual(payout, 6125)
         self.assertEqual(profit, payout - 500)
 
 
@@ -205,21 +153,22 @@ class BalanceFlows(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.directory.cleanup()
 
-    async def test_claim_limit_persists_and_resets_at_taipei_midnight(self):
+    async def test_claim_has_no_daily_limit_but_keeps_slot_cooldown(self):
         import config
         from cogs import economy
         from database import Database
         now = datetime(2026, 1, 1, tzinfo=economy.LOCAL_TZ)
         initial = await self.db.get_balance(1)
         cog = economy.Economy(None)
+        # Old daily-limit counters must not block any claim.
+        await self.db.mutate_user(1, lambda user: user.update(claim_count=999, claim_count_date="2026-01-01"))
         with patch.object(economy, "db", self.db):
             with patch.object(economy, "local_now", return_value=now):
                 await asyncio.gather(*(cog.claim.callback(cog, interaction()) for _ in range(3)))
-            self.assertEqual(await self.db.get_balance(1), initial + config.CLAIM_AMOUNT)
-            for slot in range(1, config.CLAIM_DAILY_LIMIT + 1):
+            for slot in range(1, 96):
                 with patch.object(economy, "local_now", return_value=now + timedelta(minutes=15 * slot)):
                     await cog.claim.callback(cog, interaction())
-        expected = initial + config.CLAIM_DAILY_LIMIT * config.CLAIM_AMOUNT
+        expected = initial + 96 * config.CLAIM_AMOUNT
         self.assertEqual(await self.db.get_balance(1), expected)
         reloaded = Database(self.path)
         with patch.object(economy, "db", reloaded):
@@ -232,30 +181,34 @@ class BalanceFlows(unittest.IsolatedAsyncioTestCase):
                 await cog.daily.callback(cog, interaction())
         self.assertEqual(await reloaded.get_balance(1), expected + config.CLAIM_AMOUNT + config.DAILY_AMOUNT)
 
-    async def test_bank_limits_interest_even_for_old_inflated_balances(self):
-        for principal, expected in [(1000, 0), (2000, 6), (10000, 30), (10 ** 12, 30)]:
+    async def test_bank_interest_is_one_percent_without_a_cap(self):
+        for principal in [99, 1000, 2000, 10000, 10**12, 10**30 + 999]:
             user = {"bank_balance": principal, "balance": 0, "bank_interest_period": 94}
             with patch.object(self.db, "_current_bank_interest_period", return_value=100):
                 self.db._apply_bank_interest(user)
+                expected = (principal // 100) * 6
                 self.assertEqual(user["balance"], expected)
                 self.db._apply_bank_interest(user)
                 self.assertEqual(user["balance"], expected)
                 self.assertEqual(user["bank_balance"], principal)
 
-    async def test_limits_apply_in_database_and_shared_game_entry(self):
-        from cogs import gamble_items
-        from cogs._rematch import RematchView
+    async def test_game_minimum_and_unlimited_rematch(self):
+        from cogs import gamble_items, _rematch
         initial = await self.db.get_balance(1)
-        for amount in [-100, 0, 9, 501]:
+        for amount in [-100, 0, 9]:
             self.assertIsNone(await self.db.place_bet(1, amount, "test"))
             with patch.object(gamble_items, "db", self.db):
                 self.assertIsNone(await gamble_items.place_bet_or_error(interaction(), amount, "test", [], is_followup=False))
-        callback = AsyncMock()
-        view = RematchView(1, 500, callback)
-        await view._do_replay(interaction(), 2)
-        callback.assert_not_called()
-        view.stop()
         self.assertEqual(await self.db.get_balance(1), initial)
+        await self.db.set_balance(1, 10**12)
+        callback = AsyncMock()
+        view = _rematch.RematchView(1, 10**9, callback)
+        with patch.object(_rematch, "db", self.db):
+            await view._do_replay(interaction(), 2)
+        callback.assert_awaited_once()
+        self.assertEqual(callback.call_args.args[1], 2 * 10**9)
+        view.stop()
+        self.assertIsNotNone(await self.db.place_bet(1, 2 * 10**9, "test"))
 
     async def test_settlement_duplicate_or_after_refund_does_not_mint_money(self):
         initial = await self.db.get_balance(1)
@@ -269,14 +222,13 @@ class BalanceFlows(unittest.IsolatedAsyncioTestCase):
         await self.db.settle_bet(1, pending, 100, 900, payout=1000)
         self.assertEqual(await self.db.get_balance(1), initial + 100)
 
-    async def test_database_final_prize_cap(self):
-        import config
+    async def test_database_pays_full_large_prize(self):
         initial = await self.db.get_balance(1)
         pending = await self.db.place_bet(1, 100, "test")
-        await self.db.settle_bet(1, pending, 100, 999999, payout=1000000)
-        self.assertEqual(await self.db.get_balance(1), initial - 100 + config.MAX_GAMBLE_PAYOUT)
+        await self.db.settle_bet(1, pending, 100, 10**30 - 100, payout=10**30)
+        self.assertEqual(await self.db.get_balance(1), initial - 100 + 10**30)
         stats = await self.db.get_stats(1)
-        self.assertEqual(stats["profit"], config.MAX_GAMBLE_PAYOUT - 100)
+        self.assertEqual(stats["profit"], 10**30 - 100)
 
     async def test_climb_preview_does_not_reveal_safe_floors(self):
         from cogs.climb import ClimbView
@@ -295,7 +247,7 @@ class BalanceFlows(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(view.multiplier, 1.0)
             self.assertEqual(view.defused_count, 1)
             await view.children[3].callback(interaction())
-            self.assertAlmostEqual(view.multiplier, 0.96 * 19 / 17)
+            self.assertAlmostEqual(view.multiplier, 0.99 * 19 / 17)
             previous = view.multiplier
             await view.children[3].callback(interaction())
             self.assertEqual(view.multiplier, previous)
@@ -309,7 +261,7 @@ class BalanceFlows(unittest.IsolatedAsyncioTestCase):
             for safe in range(1, 21 - mine_count):
                 view.revealed.add(safe)
                 view.update_multiplier()
-                self.assertAlmostEqual(view.multiplier, min(config.MAX_GAMBLE_PAYOUT / 100, fair_multiplier(mine_count, safe)))
+                self.assertAlmostEqual(view.multiplier, fair_multiplier(mine_count, safe))
             view.stop()
 
     async def test_crash_immediate_bust_and_duplicate_cashout(self):
@@ -323,22 +275,21 @@ class BalanceFlows(unittest.IsolatedAsyncioTestCase):
             await view.cash_out(interaction())
             settle.assert_awaited_once()
 
-    async def test_investment_limit_covers_repeated_and_different_positions(self):
+    async def test_investment_has_no_budget_cap_and_maximum_five_times_leverage(self):
         from cogs import invest
-        await self.db.set_balance(1, 10000)
+        await self.db.set_balance(1, 10**12)
         cog = invest.Invest(None)
-        quote = SimpleNamespace(symbol="TEST", name="Synthetic asset", price=100.0, currency="USD", market="test", price_time=0)
+        quote = SimpleNamespace(symbol="TEST", name="Synthetic asset", price=100.0, currency="USD", market="test", price_time=100)
         with patch.object(invest, "db", self.db), patch.object(cog, "_quote_or_reply", new_callable=AsyncMock, return_value=quote) as request:
-            for amount in [2000, 2000]:
-                await cog.buy.callback(cog, interaction(), "TEST", amount, 3.0)
+            for _ in range(2):
+                await cog.buy.callback(cog, interaction(), "TEST", 10**9, 5.0)
             quote.symbol = "TEST2"
-            await cog.buy.callback(cog, interaction(), "TEST2", 1000, 1.0)
-            await cog.buy.callback(cog, interaction(), "TEST2", 100, 1.0)
-            self.assertEqual(await self.db.get_balance(1), 5000)
+            await cog.buy.callback(cog, interaction(), "TEST2", 10**9, 1.0)
+            self.assertEqual(await self.db.get_balance(1), 10**12 - 3 * 10**9)
             self.assertEqual(len((await self.db.get_user_data(1))["invest_positions"]), 2)
             request.reset_mock()
-            await cog.buy.callback(cog, interaction(), "TEST", 2001, 1.0)
-            await cog.buy.callback(cog, interaction(), "TEST", 100, 500.0)
+            await cog.buy.callback(cog, interaction(), "TEST", 99, 1.0)
+            await cog.buy.callback(cog, interaction(), "TEST", 100, 5.01)
             request.assert_not_called()
 
 

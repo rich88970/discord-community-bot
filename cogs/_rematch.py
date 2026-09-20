@@ -189,13 +189,6 @@ class RematchView(discord.ui.View):
         if not await try_defer(interaction):
             return
         new_amount = self.last_bet * multiplier
-        if new_amount > config.MAX_GAMBLE_BET:
-            await send_error(
-                interaction,
-                f"❌ 下注上限為 **{config.MAX_GAMBLE_BET:,}**，無法用這個按鈕開局。",
-                is_followup=True,
-            )
-            return
         balance = await db.get_balance(interaction.user.id)
         if balance < new_amount:
             await send_error(

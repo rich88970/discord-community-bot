@@ -207,12 +207,6 @@ class Economy(commands.Cog):
         next_reset = next_claim_reset(now)
 
         def mutate(user):
-            today = daily_date_key(now)
-            if user.get("claim_count_date") != today:
-                user["claim_count_date"] = today
-                user["claim_count"] = 0
-            if int(user.get("claim_count", 0)) >= config.CLAIM_DAILY_LIMIT:
-                return {"ok": False, "daily_limit": True}
             if str(user.get("last_claim_slot", "")) == slot_key:
                 return {
                     "ok": False,
@@ -222,7 +216,6 @@ class Economy(commands.Cog):
             user["balance"] = int(user.get("balance", 0)) + config.CLAIM_AMOUNT
             user["last_claim"] = local_ts(now)
             user["last_claim_slot"] = slot_key
-            user["claim_count"] = int(user.get("claim_count", 0)) + 1
             item_reward = roll_shop_item_reward(user, config.CLAIM_SHOP_ITEM_CHANCE)
             return {
                 "ok": True,
@@ -232,12 +225,6 @@ class Economy(commands.Cog):
 
         result = await db.mutate_user(interaction.user.id, mutate)
         if not result["ok"]:
-            if result.get("daily_limit"):
-                await interaction.followup.send(
-                    f"今天已領滿 {config.CLAIM_DAILY_LIMIT} 次，台灣時間午夜重置。可透過 RPG 挑戰取得更多獎勵。",
-                    ephemeral=True,
-                )
-                return
             if result.get("cooldown"):
                 remain = int(result["remain"])
                 embed = discord.Embed(
@@ -263,7 +250,7 @@ class Economy(commands.Cog):
                 value=f"抽到 **{item['name']}** x1（目前持有 {item['count']}）",
                 inline=False,
             )
-        embed.set_footer(text=f"每 15 分鐘刷新；每日最多 {config.CLAIM_DAILY_LIMIT} 次，台灣時間午夜重置")
+        embed.set_footer(text="台灣時間每小時 00 / 15 / 30 / 45 分刷新，不限每日次數")
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="daily", description="每日領取代幣，金額依機器人設定")
@@ -331,6 +318,9 @@ class Economy(commands.Cog):
     ) -> None:
         await interaction.response.defer(thinking=True)
         target = user or interaction.user
+        invest_cog = self.bot.get_cog("Invest") if self.bot else None
+        if invest_cog is not None:
+            await invest_cog.check_liquidations(target.id)
         data = await db.get_user_data(target.id)
         bal = int(data.get("balance", 0))
         bank_balance = int(data.get("bank_balance", 0))
@@ -379,8 +369,8 @@ class Economy(commands.Cog):
                 value=(
                     f"持倉數：**{len(positions)}**\n"
                     f"投入保證金：**{format_money(invest_margin)}**\n"
-                    f"目前權益：**{format_money(invest_equity)}**\n"
-                    f"未實現損益：**{format_money(invest_pnl)}**（{pnl_pct:+.2f}%）"
+                    f"費後權益估值：**{format_money(invest_equity)}**\n"
+                    f"費後損益估值：**{format_money(invest_pnl)}**（{pnl_pct:+.2f}%）"
                     f"{note}"
                 ),
                 inline=False,
@@ -423,7 +413,7 @@ class Economy(commands.Cog):
             value=(
                 f"每 **{config.BANK_INTEREST_INTERVAL_HOURS} 小時** 發放銀行存款的 "
                 f"**{config.BANK_INTEREST_RATE * 100:g}%** 到錢包。\n"
-                f"計息本金上限 **{config.BANK_INTEREST_PRINCIPAL_CAP:,}**，每期向下取整。\n"
+                f"全部存款計息，不設本金或利息上限，每期向下取整。\n"
                 f"下次發放：**{next_interest:%Y-%m-%d %H:%M}**"
             ),
             inline=False,
@@ -435,7 +425,7 @@ class Economy(commands.Cog):
     async def bank_deposit(
         self,
         interaction: discord.Interaction,
-        amount: app_commands.Range[int, 1, 100_000_000_000_000],
+        amount: app_commands.Range[int, 1],
     ) -> None:
         data = await db.get_user_data(interaction.user.id)
         balance = int(data.get("balance", 0))
@@ -464,7 +454,7 @@ class Economy(commands.Cog):
             value=(
                 f"每 **{config.BANK_INTEREST_INTERVAL_HOURS} 小時** 給予銀行存款 "
                 f"**{config.BANK_INTEREST_RATE * 100:g}%**，利息直接進錢包。\n"
-                f"計息本金上限 **{config.BANK_INTEREST_PRINCIPAL_CAP:,}**，每期向下取整。"
+                f"全部存款計息，不設本金或利息上限，每期向下取整。"
             ),
             inline=False,
         )
@@ -476,7 +466,7 @@ class Economy(commands.Cog):
     async def bank_withdraw(
         self,
         interaction: discord.Interaction,
-        amount: app_commands.Range[int, 1, 1_000_000_000],
+        amount: app_commands.Range[int, 1],
     ) -> None:
         now_ts = local_ts()
 
