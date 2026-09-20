@@ -1,0 +1,29 @@
+# Credentials and local settings
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+
+# Player data, backups and logs
+data.json
+data.json.*
+*.log
+logs/
+backups/
+*.bak
+*.tmp
+
+# Python and editor artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

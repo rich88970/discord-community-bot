@@ -1,0 +1,5 @@
+discord.py>=2.3.2,<3
+aiohttp>=3.7.4,<4
+Pillow>=9.3.0
+python-dotenv>=1.0,<2
+tzdata>=2024.1
